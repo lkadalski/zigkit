@@ -3,20 +3,43 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-    const lib = b.addStaticLibrary(.{
-        .name = "zigkit",
-        .root_source_file = .{ .path = "src/root.zig" },
-        .target = target,
-        .optimize = optimize,
-    });
-    b.installArtifact(lib);
     const mod = b.addModule("zigkit", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
     });
+    const lib = b.addLibrary(.{
+        .name = "zigkit",
+        .root_module = mod,
+    });
+    b.installArtifact(lib);
 
     //step to build all examples
-    const step_examples = b.step("examples", "Build all examples");
+    const build_examples = b.step("examples", "Build all examples");
+
+    const fs = std.fs.cwd();
+    const examples_path = "examples/";
+    var dir = fs.openDir(examples_path, .{ .iterate = true }) catch |err| {
+        std.debug.print("ERROR {}", .{err});
+        return;
+    };
+    defer dir.close();
+    var it = dir.iterate();
+
+    while (it.next() catch return) |entry| {
+        if (entry.kind == .file and std.mem.endsWith(u8, entry.name, ".zig")) {
+            const path = std.fs.path.join(b.allocator, &.{ examples_path, entry.name }) catch return;
+            const exe = b.addExecutable(.{
+                .name = std.fs.path.stem(entry.name),
+                .root_module = b.createModule(.{ .root_source_file = b.path(path), .target = target, .optimize = optimize, .imports = &.{.{ .name = "zigkit", .module = mod }} }),
+            });
+
+            const install_step = b.addInstallArtifact(exe, .{});
+            build_examples.dependOn(&install_step.step);
+            const run_step = b.addRunArtifact(exe);
+            const step = b.step(exe.name, std.mem.join(b.allocator, " ", &.{ "Run example", exe.name }) catch return);
+            step.dependOn(&run_step.step);
+        }
+    }
 
     //Add a optional examples
     // const exe = b.addExecutable(.{
