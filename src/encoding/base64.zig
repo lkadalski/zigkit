@@ -1,74 +1,90 @@
 const std = @import("std");
-
-// 🔹 Zadanie: Base64 decoder
-// Cel
-// Napisz funkcję, która zamienia Base64 string z powrotem na bajty ([]u8). Funkcja powinna obsłużyć padding (=) i różne długości wejścia.
-// Krok po kroku
-// Sygnatura funkcji
-// pub fn decode(allocator: *std.mem.Allocator, input: []const u8) ![]u8
-// input → Base64 string (np. "QUFB").
-// Zwraca nowy slice alokowany przez allocator z odkodowanymi bajtami.
-// Walidacja długości
-// Base64 string musi mieć długość będącą wielokrotnością 4.
-// Padding = może występować na końcu 1–2 znaki.
-// Możesz odrzucić niepoprawne znaki (opcjonalnie na razie zakładamy poprawny input).
-// Zamiana znaków Base64 na wartości 6-bitowe
-// Stwórz funkcję _value_of(c: u8) u8 → zamienia znak 'A'..'Z', 'a'..'z', '0'..'9', '+', '/' na wartość 0–63.
-// = → traktuj jako 0.
-// Przetwarzanie po 4 znaki (24 bity)
-// Dla każdej grupy 4 znaków Base64:
-// Zamień znaki na wartości 6-bitowe: b0, b1, b2, b3.
-// Połącz w 3 bajty:
-// byte0 = (b0 << 2) | (b1 >> 4)
-// byte1 = (b1 << 4) | (b2 >> 2)
-// byte2 = (b2 << 6) | b3
-// Jeśli padding jest obecny, usuń niepotrzebne bajty:
-// 1 = → usuń ostatni bajt
-// 2 = → usuń ostatnie 2 bajty
-// Alokacja bufora
-// Oblicz docelową długość:
-// const out_len = (input.len / 4) * 3 - pad_count;
-// Alokuj out przez allocator i wpisuj bajty po kolei.
-// Zwróć wynik
-// Zwróć slice []u8 z odkodowanymi bajtami.
-// 🔹 Bonus / dodatkowe zadania
-// Obsłuż niepoprawne znaki i zwracaj błąd (error.InvalidChar).
-// Zaimplementuj decode tak, aby działał zarówno na stringach z paddingiem jak i bez.
-// Dodaj testy:
-// "QUFB" → AAA
-// "QUFBCg==" → AAA\n
-pub fn decode(input: []const u8) []const u8 {
-    return input;
+//Main Decoder
+pub fn decode(allocator: std.mem.Allocator, input: []const u8) []const u8 {
+    if (input.len == 0) {
+        return "";
+    }
+    const decoder = Base64.init();
+    return decoder.decode(allocator, input);
 }
-pub fn encode(input: []const u8) ![]const u8 {
+//Main Encoder
+pub fn encode(allocator: std.mem.Allocator, input: []const u8) ![]const u8 {
     if (input.len == 0) {
         return "";
     }
     const encoder = Base64.init();
-    //expose allocator later
-    var buffer: [1024]u8 = undefined;
-    var fba = std.heap.FixedBufferAllocator.init(&buffer);
-    const allocator = fba.allocator();
-    // defer allocator.free();
     return encoder.encode(allocator, input);
 }
 
 const Base64 = struct {
     _table: *const [64]u8,
+    _table256: [256]bool,
+    _lookupTable256: [256]u8,
     pub fn init() Base64 {
         const upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
         const lower = "abcdefghijklmnopqrstuvwxyz";
         const numbers = "0123456789";
         const characters = "+/";
-        return Base64{
-            ._table = upper ++ lower ++ numbers ++ characters,
-        };
+        const table = upper ++ lower ++ numbers ++ characters;
+        return Base64{ ._table = table, ._table256 = init_256_table(), ._lookupTable256 = init_lookup_table(table) };
+    }
+    fn init_256_table() [256]bool {
+        var t: [256]bool = .{false} ** 256;
+        for ('A'..'Z' + 1) |c| t[c] = true;
+        for ('a'..'z' + 1) |c| t[c] = true;
+        for ('0'..'9' + 1) |c| t[c] = true;
+        t['+'] = true;
+        t['/'] = true;
+        return t;
+    }
+    fn init_lookup_table(table: *const [64]u8) [256]u8 {
+        var lookup: [256]u8 = .{255} ** 256; // 255 = invalid marker
+
+        for (table, 0..) |c, i| {
+            lookup[c] = @intCast(i);
+        }
+
+        // '=' traktujemy osobno – dajemy mu wartość np. 64
+        lookup['='] = 64;
+        return lookup;
     }
     pub fn _char_at(self: Base64, index: usize) u8 {
         return self._table[index];
     }
+    pub fn _char_index(self: Base64, char: u8) u8 {
+        return self._lookupTable256[char];
+    }
+    pub fn _char_exists(self: Base64, char: u8) bool {
+        return self._table256[char];
+    }
     pub fn _calc_encode_length(input: []const u8) !usize {
         return ((input.len + 2) / 3) * 4;
+    }
+    pub fn _calc_decode_length(self: Base64, input: []const u8) Base64Error!usize {
+        const len = input.len;
+        if (len == 0) {
+            return 0;
+        }
+        if (len % 4 != 0) {
+            return error.InvalidLength;
+        }
+        var padding: u32 = 0;
+        if (input[len - 1] == '=') {
+            padding += 1;
+        }
+        if (input[len - 2] == '=') {
+            padding += 1;
+        }
+        const body_len = len - padding;
+        //is valid base64 ?
+        for (input[0..body_len]) |char| {
+            if (char == '=') return Base64Error.InvalidInput;
+            if (!self._char_exists(char)) return Base64Error.InvalidInput;
+        }
+        if (len == padding) {
+            return error.InvalidInput;
+        }
+        return ((input.len / 4) * 3) - padding;
     }
     pub fn encode(self: Base64, allocator: std.mem.Allocator, input: []const u8) ![]const u8 {
         const out_bytes = try _calc_encode_length(input);
@@ -92,6 +108,48 @@ const Base64 = struct {
         }
         // std.debug.print("in.len={}, out_bytes={}, j={}\n", .{ input.len, out.len, j });
         return out;
+    }
+    //@TODO Rewrite it into my fashion. This is from pedro book.
+    pub fn decode(self: Base64, allocator: std.mem.Allocator, input: []const u8) ![]const u8 {
+        if (input.len == 0) {
+            return "";
+        }
+        const n_output = try self._calc_decode_length(input);
+        var output = try allocator.alloc(u8, n_output);
+        var count: u8 = 0;
+        var iout: u64 = 0;
+        var buf = [4]u8{ 0, 0, 0, 0 };
+
+        for (0..input.len) |i| {
+            buf[count] = self._char_index(input[i]);
+            count += 1;
+            if (count == 4) {
+                output[iout] = (buf[0] << 2) + (buf[1] >> 4);
+                if (buf[2] != 64) {
+                    output[iout + 1] = (buf[1] << 4) + (buf[2] >> 2);
+                }
+                if (buf[3] != 64) {
+                    output[iout + 2] = (buf[2] << 6) + buf[3];
+                }
+                iout += 3;
+                count = 0;
+            }
+        }
+
+        return output;
+        // const out_bytes = try _calc_decode_length(input);
+        // var out = try allocator.alloc(u8, out_bytes);
+        // var j: usize = 0;
+        // var i: usize = 0;
+        // while (i < input.len) : (i += 4) {
+        //     //najpierw usunac pady
+        //     //
+        //     // //
+        //     const end = if (i+4 < input.len) i + 4 else input.len;
+        //     const chunk: []const u8 = input[i..end];
+        //     const bytes = turn_4_or_less_bytes_into_3(chunk);
+
+        // }
     }
     fn turn_3_or_less_bytes_into_4(input: []const u8) [4]u8 {
         var out: [4]u8 = undefined;
@@ -127,17 +185,54 @@ test "encode should work on simple text" {
     try std.testing.expectEqualStrings("QUFBQQ==", output);
     allocator.free(output);
 }
+test "decode should work on simple text" {
+    const base = Base64.init();
+    var input: []const u8 = "QUFB";
+    const allocator = std.testing.allocator;
+    var output = try base.decode(allocator, input);
+    try std.testing.expectEqualStrings("AAA", output);
+    allocator.free(output);
+    input = "QUFBQQ==";
+    output = try base.decode(allocator, input);
+    try std.testing.expectEqualStrings("AAAA", output);
+    allocator.free(output);
+}
 test "compare base64 alphabet string with std lib" {
     const base = Base64.init();
     const std_lib_chars = std.base64.standard_alphabet_chars;
     try std.testing.expect(std.mem.eql(u8, base._table, &std_lib_chars));
 }
 test "base64 encoding of empty string should be empty" {
-    const result = try encode("");
+    const base = Base64.init();
+    const allocator = std.testing.allocator;
+    const result = try base.encode(allocator, "");
     try std.testing.expect(std.mem.eql(u8, result, ""));
 }
-test "should calculate enough bytes for out" {
-    const input = "teststring";
-    const calculated = Base64._calc_encode_length(input) catch @panic("Failing!");
-    try std.testing.expectEqual(16, calculated);
+test "encoder should calculate enough bytes for out" {
+    const table = [_]Entry{ .{ .key = "teststring", .val = 16 }, .{ .key = "base64", .val = 8 }, .{ .key = "l", .val = 4 } };
+    for (table) |input| {
+        const calculated = Base64._calc_encode_length(input.key) catch @panic("Failing!");
+        try std.testing.expectEqual(input.val, calculated);
+    }
 }
+test "decoder should calculate enough bytes for out" {
+    const table = [_]Entry{ .{ .key = "emln", .val = 3 }, .{ .key = "YmFzZTY0", .val = 6 }, .{ .key = "bA==", .val = 1 } };
+    const base64 = Base64.init();
+    for (table) |input| {
+        const calculated = base64._calc_decode_length(input.key) catch @panic("Failing!");
+        try std.testing.expectEqual(input.val, calculated);
+    }
+}
+test "should return correct error" {
+    const base64 = Base64.init();
+    const table = [_]Entry{ .{ .key = "====", .err = Base64Error.InvalidInput }, .{ .key = "===", .err = Base64Error.InvalidLength }, .{ .key = "a=", .err = Base64Error.InvalidLength } };
+    for (table) |input| {
+        _ = try std.testing.expectError(input.err, base64._calc_decode_length(input.key));
+    }
+}
+const Entry = struct {
+    key: []const u8,
+    val: u32 = 0,
+    err: Base64Error = Base64Error.InvalidInput,
+};
+const Base64Error = error{ InvalidInput, InvalidLength };
