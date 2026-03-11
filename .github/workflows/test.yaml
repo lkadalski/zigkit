@@ -19,11 +19,9 @@ jobs:
     name: 🔍 Detect Changes
     runs-on: ubuntu-latest
     outputs:
-      backend: ${{ steps.filter.outputs.backend }}
-      storefront: ${{ steps.filter.outputs.storefront }}
-      admin-panel: ${{ steps.filter.outputs.admin-panel }}
-      vendor-panel: ${{ steps.filter.outputs.vendor-panel }}
-      packages: ${{ steps.filter.outputs.packages }}
+      examples: ${{ steps.filter.outputs.examples }}
+      readme: ${{ steps.filter.outputs.readme }}
+      src: ${{ steps.filter.outputs.src }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -32,6 +30,7 @@ jobs:
         uses: dorny/paths-filter@v3
         id: filter
         with:
+          base: ${{ (github.event_name == 'pull_request' && github.event.pull_request.base.sha) || github.event.before }}
           filters: |
             examples:
               - 'examples/**'
