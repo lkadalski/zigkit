@@ -13,3 +13,5 @@ Examples:
 UTF-8, Base64.
 Both are used to transform data between two machines. Where UTF-8 stands for a standard in text encoding, the base64 is standard for encoding mail attachments.
 We usually also keep secrets in kubernetes in base64 format. 
+
+#Test
