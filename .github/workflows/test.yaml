@@ -1,0 +1,41 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - master
+      - staging
+      - develop
+  pull_request:
+    branches:
+      - master
+      - staging
+      - develop
+
+  # ============================================
+  # DETECT CHANGES
+  # ============================================
+  changes:
+    name: 🔍 Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      storefront: ${{ steps.filter.outputs.storefront }}
+      admin-panel: ${{ steps.filter.outputs.admin-panel }}
+      vendor-panel: ${{ steps.filter.outputs.vendor-panel }}
+      packages: ${{ steps.filter.outputs.packages }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Filter paths
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            examples:
+              - 'examples/**'
+            readme:
+              - 'README.md'
+            src:
+              - 'src/**'
